@@ -1,0 +1,60 @@
+services:
+  first-server:
+    image: "distributed-datastore"
+    container_name: "Server1"
+    volumes:
+      - ../Server/src:/go/src/mathapp
+    networks:
+      - "datastore"
+    ports:
+      - "8010:8010"
+    environment:
+      ADDRESS: ":8010"
+      ID: "0"
+    restart: unless-stopped
+
+  second-server:
+    image: "distributed-datastore"
+    container_name: "Server2"
+    volumes:
+      - ../Server/src:/go/src/mathapp
+    networks:
+      - "datastore"
+    ports:
+      - "8020:8020"
+    environment:
+      ADDRESS: ":8020"
+      ID: "1"
+    restart: unless-stopped
+
+  third-server:
+    image: "distributed-datastore"
+    container_name: "Server3"
+    volumes:
+      - ../Server/src:/go/src/mathapp
+    networks:
+      - "datastore"
+    ports:
+      - "8030:8030"
+    environment:
+      ADDRESS: ":8030"
+      ID: "2"
+    restart: unless-stopped
+
+  fourth-server:
+    image: "distributed-datastore"
+    container_name: "Server4"
+    volumes:
+      - ../Server/src:/go/src/mathapp
+    networks:
+      - "datastore"
+    ports:
+      - "8040:8040"
+    environment:
+      ADDRESS: ":8040"
+      ID: "3"
+    restart: unless-stopped
+
+networks:
+  datastore:
+    name: "Distributed Datastore"
