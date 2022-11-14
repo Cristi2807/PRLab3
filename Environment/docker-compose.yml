@@ -1,5 +1,29 @@
 services:
+  proxy-server:
+    image: "distributed-datastore"
+    container_name: "ProxyServer"
+    volumes:
+      - ../ProxyServer/src:/go/src/mathapp
+    networks:
+      - "datastore"
+    ports:
+      - "7000:7000"
+    restart: unless-stopped
+
   first-server:
+    image: "distributed-datastore"
+    container_name: "Server0"
+    volumes:
+      - ../Server/src:/go/src/mathapp
+    networks:
+      - "datastore"
+    ports:
+      - "8010:8000"
+    environment:
+      ID: "0"
+    restart: unless-stopped
+
+  second-server:
     image: "distributed-datastore"
     container_name: "Server1"
     volumes:
@@ -7,13 +31,12 @@ services:
     networks:
       - "datastore"
     ports:
-      - "8010:8010"
+      - "8020:8000"
     environment:
-      ADDRESS: ":8010"
-      ID: "0"
+      ID: "1"
     restart: unless-stopped
 
-  second-server:
+  third-server:
     image: "distributed-datastore"
     container_name: "Server2"
     volumes:
@@ -21,13 +44,12 @@ services:
     networks:
       - "datastore"
     ports:
-      - "8020:8020"
+      - "8030:8000"
     environment:
-      ADDRESS: ":8020"
-      ID: "1"
+      ID: "2"
     restart: unless-stopped
 
-  third-server:
+  fourth-server:
     image: "distributed-datastore"
     container_name: "Server3"
     volumes:
@@ -35,23 +57,8 @@ services:
     networks:
       - "datastore"
     ports:
-      - "8030:8030"
+      - "8040:8000"
     environment:
-      ADDRESS: ":8030"
-      ID: "2"
-    restart: unless-stopped
-
-  fourth-server:
-    image: "distributed-datastore"
-    container_name: "Server4"
-    volumes:
-      - ../Server/src:/go/src/mathapp
-    networks:
-      - "datastore"
-    ports:
-      - "8040:8040"
-    environment:
-      ADDRESS: ":8040"
       ID: "3"
     restart: unless-stopped
 
