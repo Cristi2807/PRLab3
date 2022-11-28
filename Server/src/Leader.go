@@ -3,131 +3,410 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
+	"hash/fnv"
 	"io"
 	"net/http"
 	"strconv"
 )
 
-var srvDuplicate = ClusterSize/2 + 1
-var saveIndex int
+var replicaFactor = ClusterSize/2 + 1
+
+var serverToHandle = 0
 
 func storeDataLeader(w http.ResponseWriter, r *http.Request) {
 
-	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
+	if leader == ID && serverToHandle != ID {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
 
-	type Cell struct {
-		Key   string `json:"key"`
-		Value any    `json:"value"`
-	}
+		rbody := io.NopCloser(bytes.NewReader(body))
+		req, _ := http.NewRequest(http.MethodPost, "http://server"+strconv.Itoa(serverToHandle)+":8000/datastore", rbody)
+		resp, _ := http.DefaultClient.Do(req)
 
-	var cell Cell
+		w.WriteHeader(resp.StatusCode)
 
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	json.NewDecoder(r.Body).Decode(&cell)
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
 
-	if len(getIndex(cell.Key)) > 0 {
-		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
-	for i := saveIndex; i < saveIndex+srvDuplicate; i++ {
-		rbody := io.NopCloser(bytes.NewReader(body))
-		req, _ := http.NewRequest(http.MethodPost, "http://server"+strconv.Itoa(mod(i, ClusterSize))+":8001/data", rbody)
-		http.DefaultClient.Do(req)
+	if leader == ID && serverToHandle == ID {
+		fmt.Println("Server", ID, "serving")
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
+
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+
+		type Cell struct {
+			Key    string `json:"key"`
+			Value  any    `json:"value"`
+			Server int    `json:"server"`
+		}
+
+		var cell Cell
+
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		json.NewDecoder(r.Body).Decode(&cell)
+
+		srvNumber := getServerForKey(cell.Key)
+
+		cell.Server = srvNumber
+
+		cellMarshalled, _ := json.Marshal(cell)
+
+		var respSent = false
+
+		for i := 0; i < replicaFactor; i++ {
+			rBody := bytes.NewBuffer(cellMarshalled)
+			req, _ := http.NewRequest(http.MethodPost, "http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data", rBody)
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil && resp.StatusCode == http.StatusUnprocessableEntity {
+				w.WriteHeader(resp.StatusCode)
+				return
+			}
+
+			if err == nil && respSent == false {
+				w.WriteHeader(resp.StatusCode)
+				respSent = true
+			}
+
+		}
+
+		if respSent == false {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
 	}
 
-	saveIndex++
-	w.WriteHeader(http.StatusCreated)
+	if leader != ID {
+		fmt.Println("Server", ID, "serving")
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
 
+		type Cell struct {
+			Key    string `json:"key"`
+			Value  any    `json:"value"`
+			Server int    `json:"server"`
+		}
+
+		var cell Cell
+
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		json.NewDecoder(r.Body).Decode(&cell)
+
+		srvNumber := getServerForKey(cell.Key)
+
+		cell.Server = srvNumber
+
+		cellMarshalled, _ := json.Marshal(cell)
+
+		var respSent = false
+
+		for i := 0; i < replicaFactor; i++ {
+			rBody := bytes.NewBuffer(cellMarshalled)
+			req, _ := http.NewRequest(http.MethodPost, "http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data", rBody)
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil && resp.StatusCode == http.StatusUnprocessableEntity {
+				w.WriteHeader(resp.StatusCode)
+				return
+			}
+
+			if err == nil && respSent == false {
+				w.WriteHeader(resp.StatusCode)
+				respSent = true
+			}
+
+		}
+
+		if respSent == false {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+
+		return
+	}
 }
 
 func updateDataLeader(w http.ResponseWriter, r *http.Request) {
 
-	body, _ := io.ReadAll(r.Body)
-	defer r.Body.Close()
+	if leader == ID && serverToHandle != ID {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
 
-	type Cell struct {
-		Key   string `json:"key"`
-		Value any    `json:"value"`
-	}
+		rbody := io.NopCloser(bytes.NewReader(body))
+		req, _ := http.NewRequest(http.MethodPut, "http://server"+strconv.Itoa(serverToHandle)+":8000/datastore", rbody)
+		resp, _ := http.DefaultClient.Do(req)
 
-	var cell Cell
+		w.WriteHeader(resp.StatusCode)
 
-	r.Body = io.NopCloser(bytes.NewReader(body))
-	json.NewDecoder(r.Body).Decode(&cell)
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
 
-	index := getIndex(cell.Key)
-
-	if len(index) == 0 {
-		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	for _, v := range index {
-		rbody := io.NopCloser(bytes.NewReader(body))
-		req, _ := http.NewRequest(http.MethodPut, "http://server"+strconv.Itoa(v)+":8001/data", rbody)
-		http.DefaultClient.Do(req)
+	if leader == ID && serverToHandle == ID {
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
+
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
+
+		type Cell struct {
+			Key    string `json:"key"`
+			Value  any    `json:"value"`
+			Server int    `json:"server"`
+		}
+
+		var cell Cell
+
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		json.NewDecoder(r.Body).Decode(&cell)
+
+		srvNumber := getServerForKey(cell.Key)
+
+		cell.Server = srvNumber
+
+		cellMarshalled, _ := json.Marshal(cell)
+
+		var respSent = false
+
+		for i := 0; i < replicaFactor; i++ {
+			rBody := bytes.NewBuffer(cellMarshalled)
+			req, _ := http.NewRequest(http.MethodPut, "http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data", rBody)
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil && resp.StatusCode == http.StatusNotFound {
+				w.WriteHeader(resp.StatusCode)
+				return
+			}
+
+			if err == nil && respSent == false {
+				w.WriteHeader(resp.StatusCode)
+				respSent = true
+			}
+
+		}
+
+		if respSent == false {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if leader != ID {
+		body, _ := io.ReadAll(r.Body)
+		defer r.Body.Close()
 
+		type Cell struct {
+			Key    string `json:"key"`
+			Value  any    `json:"value"`
+			Server int    `json:"server"`
+		}
+
+		var cell Cell
+
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		json.NewDecoder(r.Body).Decode(&cell)
+
+		srvNumber := getServerForKey(cell.Key)
+
+		cell.Server = srvNumber
+
+		cellMarshalled, _ := json.Marshal(cell)
+
+		var respSent = false
+
+		for i := 0; i < replicaFactor; i++ {
+			rBody := bytes.NewBuffer(cellMarshalled)
+			req, _ := http.NewRequest(http.MethodPut, "http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data", rBody)
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil && resp.StatusCode == http.StatusNotFound {
+				w.WriteHeader(resp.StatusCode)
+				return
+			}
+
+			if err == nil && respSent == false {
+				w.WriteHeader(resp.StatusCode)
+				respSent = true
+			}
+
+		}
+
+		if respSent == false {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+
+		return
+	}
 }
 
 func removeDataLeader(w http.ResponseWriter, r *http.Request) {
 
-	params := mux.Vars(r)
+	if leader == ID && serverToHandle != ID {
 
-	index := getIndex(params["key"])
+		params := mux.Vars(r)
 
-	if len(index) == 0 {
-		w.WriteHeader(http.StatusNotFound)
+		req, _ := http.NewRequest(http.MethodDelete, "http://server"+strconv.Itoa(serverToHandle)+":8000/datastore/"+params["key"], nil)
+		resp, _ := http.DefaultClient.Do(req)
+
+		w.WriteHeader(resp.StatusCode)
+
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
+
 		return
 	}
 
-	for _, v := range index {
-		req, _ := http.NewRequest(http.MethodDelete, "http://server"+strconv.Itoa(v)+":8001/data/"+params["key"], nil)
-		http.DefaultClient.Do(req)
+	if leader == ID && serverToHandle == ID {
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
+
+		params := mux.Vars(r)
+
+		srvNumber := getServerForKey(params["key"])
+
+		var respSent = false
+
+		for i := 0; i < replicaFactor; i++ {
+			req, _ := http.NewRequest(http.MethodDelete,
+				"http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data/"+params["key"]+"/"+strconv.Itoa(srvNumber),
+				nil)
+
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil && resp.StatusCode == http.StatusNotFound {
+				w.WriteHeader(resp.StatusCode)
+				return
+			}
+
+			if err == nil && respSent == false {
+				w.WriteHeader(resp.StatusCode)
+				respSent = true
+			}
+
+		}
+
+		if respSent == false {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+
+		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	if leader != ID {
+		params := mux.Vars(r)
 
+		srvNumber := getServerForKey(params["key"])
+
+		var respSent = false
+
+		for i := 0; i < replicaFactor; i++ {
+			req, _ := http.NewRequest(http.MethodDelete,
+				"http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data/"+params["key"]+"/"+strconv.Itoa(srvNumber),
+				nil)
+
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil && resp.StatusCode == http.StatusNotFound {
+				w.WriteHeader(resp.StatusCode)
+				return
+			}
+
+			if err == nil && respSent == false {
+				w.WriteHeader(resp.StatusCode)
+				respSent = true
+			}
+
+		}
+
+		if respSent == false {
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+
+		return
+	}
 }
 
 func getDataLeader(w http.ResponseWriter, r *http.Request) {
 
-	params := mux.Vars(r)
+	if leader == ID && serverToHandle != ID {
+		params := mux.Vars(r)
 
-	index := getIndex(params["key"])
+		resp, _ := http.Get("http://server" + strconv.Itoa(leader) + ":8000/datastore/" + params["key"])
 
-	if len(index) == 0 {
-		w.WriteHeader(http.StatusNotFound)
+		body, _ := io.ReadAll(resp.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		w.Write(body)
+
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
+
 		return
 	}
 
-	resp, _ := http.Get("http://server" + strconv.Itoa(index[0]) + ":8001/data/" + params["key"])
+	if leader == ID && serverToHandle == ID {
+		serverToHandle = mod(serverToHandle+1, ClusterSize)
 
-	body, _ := io.ReadAll(resp.Body)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(body)
+		params := mux.Vars(r)
 
-}
+		srvNumber := getServerForKey(params["key"])
 
-func getIndex(key string) []int {
-	var a []int
+		for i := 0; i < replicaFactor; i++ {
+			req, _ := http.NewRequest(http.MethodGet,
+				"http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data/"+params["key"]+"/"+strconv.Itoa(srvNumber),
+				nil)
 
-	for i := 0; i < ClusterSize; i++ {
-		resp, err := http.Get("http://server" + strconv.Itoa(i) + ":8001/data/" + key)
+			resp, err := http.DefaultClient.Do(req)
 
-		if err == nil && resp.StatusCode == http.StatusOK {
-			a = append(a, i)
+			if err == nil {
+				body, _ := io.ReadAll(resp.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(body)
+				return
+			}
+
 		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+
+		return
 	}
-	return a
+
+	if leader != ID {
+		params := mux.Vars(r)
+
+		srvNumber := getServerForKey(params["key"])
+
+		for i := 0; i < replicaFactor; i++ {
+			req, _ := http.NewRequest(http.MethodGet,
+				"http://server"+strconv.Itoa(mod(i+srvNumber, ClusterSize))+":8001/data/"+params["key"]+"/"+strconv.Itoa(srvNumber),
+				nil)
+
+			resp, err := http.DefaultClient.Do(req)
+
+			if err == nil {
+				body, _ := io.ReadAll(resp.Body)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(resp.StatusCode)
+				w.Write(body)
+				return
+			}
+
+		}
+
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
 }
 
 func mod(a int, b int) int {
 	return (b + (a % b)) % b
+}
+
+func getServerForKey(s string) int {
+	h := fnv.New32a()
+	h.Write([]byte(s))
+	return int(h.Sum32() % ClusterSize)
 }

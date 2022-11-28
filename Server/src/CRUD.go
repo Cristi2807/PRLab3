@@ -7,7 +7,10 @@ import (
 	"github.com/gorilla/mux"
 	"io"
 	"net/http"
+	"strconv"
 )
+
+var recovered = false
 
 func storeData(w http.ResponseWriter, r *http.Request) {
 
@@ -15,8 +18,9 @@ func storeData(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	type Cell struct {
-		Key   any `json:"key"`
-		Value any `json:"value"`
+		Key    any `json:"key"`
+		Value  any `json:"value"`
+		Server int `json:"server"`
 	}
 
 	var cell Cell
@@ -24,15 +28,15 @@ func storeData(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	json.NewDecoder(r.Body).Decode(&cell)
 
-	_, ok := data.Load(cell.Key)
+	_, ok := data[cell.Server].Load(cell.Key)
 
 	if ok == true {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		return
 	}
 
-	data.Store(cell.Key, cell.Value)
-	fmt.Println("Data stored successfully")
+	data[cell.Server].Store(cell.Key, cell.Value)
+	fmt.Println("Data", cell, "stored successfully")
 
 	w.WriteHeader(http.StatusCreated)
 }
@@ -43,8 +47,9 @@ func updateData(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	type Cell struct {
-		Key   any `json:"key"`
-		Value any `json:"value"`
+		Key    any `json:"key"`
+		Value  any `json:"value"`
+		Server int `json:"server"`
 	}
 
 	var cell Cell
@@ -52,15 +57,15 @@ func updateData(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	json.NewDecoder(r.Body).Decode(&cell)
 
-	_, ok := data.Load(cell.Key)
+	_, ok := data[cell.Server].Load(cell.Key)
 
 	if ok == false {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	data.Store(cell.Key, cell.Value)
-	fmt.Println("Data updated")
+	data[cell.Server].Store(cell.Key, cell.Value)
+	fmt.Println("Data", cell, "updated")
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -69,14 +74,16 @@ func removeData(w http.ResponseWriter, r *http.Request) {
 
 	params := mux.Vars(r)
 
-	_, ok := data.Load(params["key"])
+	srvNumber, _ := strconv.Atoi(params["server"])
+
+	_, ok := data[srvNumber].Load(params["key"])
 
 	if ok == false {
 		w.WriteHeader(http.StatusNotFound)
 		return
 	}
 
-	data.Delete(params["key"])
+	data[srvNumber].Delete(params["key"])
 	fmt.Println("Data deleted")
 
 	w.WriteHeader(http.StatusOK)
@@ -86,7 +93,9 @@ func getData(w http.ResponseWriter, r *http.Request) {
 
 	params := mux.Vars(r)
 
-	value, ok := data.Load(params["key"])
+	srvNumber, _ := strconv.Atoi(params["server"])
+
+	value, ok := data[srvNumber].Load(params["key"])
 
 	if ok == false {
 		w.WriteHeader(http.StatusNotFound)
@@ -105,4 +114,38 @@ func getData(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write(dataMarshalled)
+}
+
+func setRecovered(w http.ResponseWriter, r *http.Request) {
+	recovered = true
+}
+
+func recoverServer(w http.ResponseWriter, r *http.Request) {
+	if recovered == true {
+
+		params := mux.Vars(r)
+
+		replica, _ := strconv.Atoi(params["replica"])
+
+		var m = make(map[string]string)
+
+		data[replica].Range(func(k any, v any) bool {
+
+			k1 := k.(string)
+			v1 := v.(string)
+
+			m[k1] = v1
+
+			return true
+		})
+
+		dataMarshalled, _ := json.Marshal(m)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write(dataMarshalled)
+
+	} else {
+		w.WriteHeader(http.StatusExpectationFailed)
+	}
 }

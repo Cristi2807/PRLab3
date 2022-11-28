@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -13,26 +14,35 @@ import (
 var ID, _ = strconv.Atoi(os.Getenv("ID"))
 
 var leader = -1
-var ActiveServers = 1
 
 var leaderBeat = make(chan bool)
 var followerBeat = make(chan bool)
 
-var m sync.Mutex
+var mutex sync.Mutex
 
 var listening = false
 
 func Election() {
 
 	for i := ClusterSize - 1; i >= 0; i-- {
-		_, err := http.Get("http://server" + strconv.Itoa(i) + ":8001/test")
+		_, err := net.ResolveTCPAddr("tcp", "server"+strconv.Itoa(i)+":3000")
 
 		if err == nil {
 			//fmt.Println("Leader", i, time.Now())
 			for j := 0; j <= i; j++ {
-				leaderMarshalled, _ := json.Marshal(i)
-				rBody := bytes.NewBuffer(leaderMarshalled)
-				http.Post("http://server"+strconv.Itoa(j)+":8001/victory", "application/json", rBody)
+				tcpAddr, err1 := net.ResolveTCPAddr("tcp", "server"+strconv.Itoa(j)+":3000")
+
+				if err1 == nil {
+
+					conn, _ := net.DialTCP("tcp", nil, tcpAddr)
+
+					objMarshalled, _ := json.Marshal(i)
+
+					conn.Write(objMarshalled)
+
+					conn.Close()
+
+				}
 			}
 
 			leaderMarshalled, _ := json.Marshal(i)
@@ -45,28 +55,25 @@ func Election() {
 
 }
 
-func getTest(w http.ResponseWriter, r *http.Request) {
-	w.WriteHeader(http.StatusOK)
-}
-
-func postVictory(w http.ResponseWriter, r *http.Request) {
-	m.Lock()
-	defer m.Unlock()
+func postVictory(conn net.Conn) {
+	mutex.Lock()
+	defer mutex.Unlock()
 
 	var newLeader int
-	json.NewDecoder(r.Body).Decode(&newLeader)
+	d := json.NewDecoder(conn)
+
+	d.Decode(&newLeader)
 	//fmt.Println("OLD:", leader, "NEW:", newLeader, time.Now())
 
 	if newLeader != ID && leader == ID {
 		leaderBeat <- true
+
 		//fmt.Println("heartbeat stop, listening", time.Now())
 		go listenHeartBeat()
 	}
 
 	if newLeader == ID && leader != ID {
 		go leaderHeartBeat()
-
-		go startLeaderServer()
 	}
 
 	if newLeader != ID && leader != ID && listening == false {
@@ -77,7 +84,17 @@ func postVictory(w http.ResponseWriter, r *http.Request) {
 	leader = newLeader
 }
 
-func getHeartBeat(w http.ResponseWriter, r *http.Request) {
+func getHeartBeat(conn *net.UDPConn) {
+	d := json.NewDecoder(conn)
+
+	type Obj struct {
+		Heartbeat string
+	}
+
+	var obj Obj
+
+	d.Decode(&obj)
+
 	followerBeat <- true
 }
 
@@ -97,21 +114,22 @@ func listenHeartBeat() {
 }
 
 func sendHeartBeat() {
-	ActiveServers = 1
-	for i := 0; i < ClusterSize; i++ {
-		if i != ID {
-			_, err := http.Get("http://server" + strconv.Itoa(i) + ":8001/heartbeat")
 
-			if err == nil {
-				ActiveServers++
-			}
-		}
+	udpAddr, _ := net.ResolveUDPAddr("udp", "239.0.0.0:5000")
+
+	conn, _ := net.DialUDP("udp", nil, udpAddr)
+
+	obj := struct {
+		Heartbeat string
+	}{
+		Heartbeat: "heartbeat",
 	}
 
-	ActiveServersMarshalled, _ := json.Marshal(ActiveServers)
-	rBody := bytes.NewBuffer(ActiveServersMarshalled)
-	http.Post("http://proxyserver:7000/active", "application/json", rBody)
+	objMarshalled, _ := json.Marshal(obj)
 
+	conn.Write(objMarshalled)
+
+	conn.Close()
 }
 
 func leaderHeartBeat() {
